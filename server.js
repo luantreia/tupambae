@@ -22,12 +22,17 @@ app.use((req, res, next) => {
 });
 
 // Middleware
-app.use(helmet()); // Seguridad de cabeceras HTTP
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: true, // Permite cualquier origen en desarrollo/producción para evitar bloqueos de CORS
   credentials: true
 }));
 app.use(express.json());
+
+// Health Check para Render
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
 // DB Connection
 mongoose.connect(process.env.MONGO_URI)
