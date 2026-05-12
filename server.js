@@ -62,31 +62,57 @@ app.use('/api/', apiLimiter);
 // Health Check para Render
 app.get('/health', (req, res) => res.status(200).send('OK'));
 
-// DB Connection
+// DB Connection con reintentos y mejor manejo de errores
 console.log('Conectando a MongoDB...');
-mongoose.connect(process.env.MONGO_URI)
-  .then(async () => {
-    console.log('✓ MongoDB conectado exitosamente');
-    logger.info('MongoDB conectado exitosamente');
-    
-    // Crear índices optimizados
+const connectWithRetry = async (maxRetries = 3) => {
+  for (let i = 0; i < maxRetries; i++) {
     try {
-      console.log('Verificando/creando índices...');
-      const { createIndexes } = require('./models/index');
-      await createIndexes();
-      console.log('✓ Índices de MongoDB verificados/creados');
-      logger.info('Índices de MongoDB verificados/creados');
-    } catch (error) {
-      console.error('✗ Error creando índices:', error.message);
-      logger.error('Error creando índices', { error: error.message });
+      console.log(`Intento ${i + 1}/${maxRetries} de conexión a MongoDB...`);
+      
+      await mongoose.connect(process.env.MONGO_URI, {
+        serverSelectionTimeoutMS: 10000, // 10 segundos timeout
+        connectTimeoutMS: 10000,
+        socketTimeoutMS: 45000,
+      });
+      
+      console.log('✓ MongoDB conectado exitosamente');
+      logger.info('MongoDB conectado exitosamente');
+      
+      // Crear índices optimizados
+      try {
+        console.log('Verificando/creando índices...');
+        const { createIndexes } = require('./models/index');
+        await createIndexes();
+        console.log('✓ Índices de MongoDB verificados/creados');
+        logger.info('Índices de MongoDB verificados/creados');
+      } catch (error) {
+        console.error('✗ Error creando índices:', error.message);
+        logger.error('Error creando índices', { error: error.message });
+      }
+      
+      return true;
+    } catch (err) {
+      console.error(`✗ Intento ${i + 1} fallido:`, err.message);
+      
+      if (i === maxRetries - 1) {
+        console.error('\n❌ No se pudo conectar a MongoDB después de varios intentos.');
+        console.error('Posibles soluciones:');
+        console.error('1. Verifica que el MongoDB URI sea correcto');
+        console.error('2. Asegúrate que MongoDB Atlas permita conexiones desde Render (IP whitelist)');
+        console.error('3. Considera usar una conexión directa (sin SRV) si hay problemas de DNS');
+        console.error('4. Verifica que las credenciales sean correctas');
+        console.error('\nError final:', err.message);
+        logger.error('Error conectando a MongoDB', { error: err.message });
+        process.exit(1);
+      }
+      
+      // Esperar antes del siguiente intento
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
-  })
-  .catch(err => {
-    console.error('✗ Error conectando a MongoDB:', err.message);
-    console.error('Detalles del error:', err);
-    logger.error('Error conectando a MongoDB', { error: err.message });
-    process.exit(1);
-  });
+  }
+};
+
+connectWithRetry();
 
 // Routes con rate limiting específico
 app.use('/api/auth', authLimiter, require('./routes/authRoutes'));
