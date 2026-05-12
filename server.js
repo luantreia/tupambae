@@ -13,12 +13,21 @@ const app = express();
 
 // Validación de variables de entorno críticas
 const requiredEnv = ['MONGO_URI', 'JWT_SECRET'];
-requiredEnv.forEach(env => {
-  if (!process.env[env]) {
-    console.error(`FATAL ERROR: ${env} no está definido.`);
-    process.exit(1);
-  }
-});
+const missingEnv = requiredEnv.filter(env => !process.env[env]);
+
+if (missingEnv.length > 0) {
+  console.error('FATAL ERROR: Las siguientes variables de entorno son requeridas:');
+  missingEnv.forEach(env => console.error(`  - ${env}`));
+  console.error('\nPor favor configura estas variables en tu entorno de producción.');
+  process.exit(1);
+}
+
+// Log de configuración (sin mostrar valores sensibles)
+console.log('Configuración del servidor:');
+console.log(`  - MONGO_URI: ${process.env.MONGO_URI ? '✓ Configurada' : '✗ No configurada'}`);
+console.log(`  - JWT_SECRET: ${process.env.JWT_SECRET ? '✓ Configurada' : '✗ No configurada'}`);
+console.log(`  - PORT: ${process.env.PORT || 5000}`);
+console.log(`  - NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
 
 // Middleware de Logging estructurado
 app.use(httpLogger);
@@ -54,20 +63,27 @@ app.use('/api/', apiLimiter);
 app.get('/health', (req, res) => res.status(200).send('OK'));
 
 // DB Connection
+console.log('Conectando a MongoDB...');
 mongoose.connect(process.env.MONGO_URI)
   .then(async () => {
+    console.log('✓ MongoDB conectado exitosamente');
     logger.info('MongoDB conectado exitosamente');
     
     // Crear índices optimizados
     try {
+      console.log('Verificando/creando índices...');
       const { createIndexes } = require('./models/index');
       await createIndexes();
+      console.log('✓ Índices de MongoDB verificados/creados');
       logger.info('Índices de MongoDB verificados/creados');
     } catch (error) {
+      console.error('✗ Error creando índices:', error.message);
       logger.error('Error creando índices', { error: error.message });
     }
   })
   .catch(err => {
+    console.error('✗ Error conectando a MongoDB:', err.message);
+    console.error('Detalles del error:', err);
     logger.error('Error conectando a MongoDB', { error: err.message });
     process.exit(1);
   });
