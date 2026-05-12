@@ -62,16 +62,53 @@ app.use('/api/', apiLimiter);
 // Health Check para Render
 app.get('/health', (req, res) => res.status(200).send('OK'));
 
-// DB Connection con reintentos y mejor manejo de errores
+// DB Connection con fallback a conexión directa
 console.log('Conectando a MongoDB...');
+
+// Función para convertir SRV a conexión directa
+const convertToDirectConnection = (srvUri) => {
+  try {
+    const url = new URL(srvUri);
+    const hostname = url.hostname;
+    
+    // Extraer cluster info del hostname
+    const clusterMatch = hostname.match(/^([^.]+)\.mongodb\.net$/);
+    if (!clusterMatch) return null;
+    
+    const clusterName = clusterMatch[1];
+    const username = url.username;
+    const password = url.password;
+    const database = url.pathname.substring(1); // Remove leading /
+    
+    // Construir URI directa (formato común de MongoDB Atlas)
+    const directUri = `mongodb://${username}:${password}@${clusterName}-shard-00-00.mongodb.net:27017,${clusterName}-shard-00-01.mongodb.net:27017,${clusterName}-shard-00-02.mongodb.net:27017/${database}?ssl=true&replicaSet=atlas-${clusterName}&authSource=admin&retryWrites=true&w=majority`;
+    
+    console.log('🔄 Intentando conexión directa como fallback...');
+    return directUri;
+  } catch (error) {
+    console.error('Error convirtiendo a conexión directa:', error.message);
+    return null;
+  }
+};
+
 const connectWithRetry = async (maxRetries = 3) => {
+  const originalUri = process.env.MONGO_URI;
+  let useDirectFallback = false;
+  
   for (let i = 0; i < maxRetries; i++) {
     try {
-      console.log(`Intento ${i + 1}/${maxRetries} de conexión a MongoDB...`);
+      const uri = useDirectFallback ? convertToDirectConnection(originalUri) : originalUri;
       
-      await mongoose.connect(process.env.MONGO_URI, {
-        serverSelectionTimeoutMS: 10000, // 10 segundos timeout
-        connectTimeoutMS: 10000,
+      if (!uri) {
+        throw new Error('No se pudo generar URI de conexión directa');
+      }
+      
+      console.log(`Intento ${i + 1}/${maxRetries} de conexión a MongoDB...`);
+      console.log(`Usando: ${useDirectFallback ? 'conexión directa' : 'SRV'}`);
+      
+      await mongoose.connect(uri, {
+        serverSelectionTimeoutMS: 15000, // 15 segundos timeout
+        connectTimeoutMS: 15000,
         socketTimeoutMS: 45000,
       });
       
@@ -94,12 +131,20 @@ const connectWithRetry = async (maxRetries = 3) => {
     } catch (err) {
       console.error(`✗ Intento ${i + 1} fallido:`, err.message);
       
+      // Si falla por DNS y no hemos intentado conexión directa, cambiar al fallback
+      if (err.message.includes('ENOTFOUND') && !useDirectFallback) {
+        console.log('🔄 Detectado problema de DNS, cambiando a conexión directa...');
+        useDirectFallback = true;
+        i--; // Reintentar con conexión directa
+        continue;
+      }
+      
       if (i === maxRetries - 1) {
         console.error('\n❌ No se pudo conectar a MongoDB después de varios intentos.');
         console.error('Posibles soluciones:');
         console.error('1. Verifica que el MongoDB URI sea correcto');
         console.error('2. Asegúrate que MongoDB Atlas permita conexiones desde Render (IP whitelist)');
-        console.error('3. Considera usar una conexión directa (sin SRV) si hay problemas de DNS');
+        console.error('3. Configura "Allow access from anywhere" (0.0.0.0/0) en MongoDB Atlas');
         console.error('4. Verifica que las credenciales sean correctas');
         console.error('\nError final:', err.message);
         logger.error('Error conectando a MongoDB', { error: err.message });
@@ -107,7 +152,7 @@ const connectWithRetry = async (maxRetries = 3) => {
       }
       
       // Esperar antes del siguiente intento
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
 };
