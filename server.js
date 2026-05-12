@@ -32,21 +32,26 @@ console.log(`  - NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
 // Middleware de Logging estructurado
 app.use(httpLogger);
 
-// Middleware de seguridad
-app.use(addSecurityHeaders);
-app.use(detectMaliciousContent);
+// CORS primero (antes de todo security middleware)
+app.use(cors({
+  origin: true, // Permite cualquier origen en desarrollo/producción para evitar bloqueos de CORS
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 // Middleware de compresión
 app.use(compression());
 
-// Middleware
+// Helmet con configuración CORS-friendly
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: false // Deshabilitar CSP para evitar bloqueos CORS
 }));
-app.use(cors({
-  origin: true, // Permite cualquier origen en desarrollo/producción para evitar bloqueos de CORS
-  credentials: true
-}));
+
+// Middleware de seguridad (después de CORS)
+app.use(addSecurityHeaders);
+app.use(detectMaliciousContent);
 app.use(express.json());
 
 // Middleware de sanitización de inputs
@@ -56,11 +61,20 @@ app.use(sanitizeInput);
 app.use('/api/productores', cacheMiddleware(1800)); // 30 minutos
 app.use('/api/productos', cacheMiddleware(900)); // 15 minutos
 
-// Rate limiting general para API
-app.use('/api/', apiLimiter);
-
 // Health Check para Render
 app.get('/health', (req, res) => res.status(200).send('OK'));
+
+// Manejar preflight requests para CORS (antes de rate limiting)
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.status(200).send();
+});
+
+// Rate limiting general para API (después de OPTIONS handler)
+app.use('/api/', apiLimiter);
 
 // DB Connection con fallback a conexión directa
 console.log('Conectando a MongoDB...');
