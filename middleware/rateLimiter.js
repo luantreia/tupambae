@@ -1,4 +1,5 @@
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = require('express-rate-limit');
 
 // Configuración general de rate limiting
 const createRateLimiter = (options = {}) => {
@@ -131,8 +132,9 @@ const suspiciousIPLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    // Usar combinación de IP y User-Agent para mejor detección
-    return `${req.ip}-${req.get('User-Agent')}`;
+    // Usar combinación de IP (con soporte IPv6) y User-Agent para mejor detección
+    const ip = ipKeyGenerator(req);
+    return `${ip}-${req.get('User-Agent')}`;
   }
 });
 
